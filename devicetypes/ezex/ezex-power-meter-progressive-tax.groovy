@@ -13,16 +13,18 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  */
-// 9/29 검침일 표기부분 수정, 이번달 누적전력 커스텀초기화 메뉴 추가
+
 // 8/27 계절/하계 요금수정.
 // 8/30 UI변경 
 // 9/8 기준일 변경시 스케줄 정상반영되도록 수정.
+// 9/29 검침일 표기부분 수정, 이번달 누적전력 커스텀초기화 메뉴 추가
+// 2021-7-26 2021년 전기요금체제로 개편. 관련 요율을 하나의 배열로만 저장하여 코딩 오류 및 추후 변동시에 대응이 편하도록 함.
 
 import groovy.json.JsonOutput
 import physicalgraph.zigbee.clusters.iaszone.ZoneStatus
 import physicalgraph.zigbee.zcl.DataType
 
-metadata{  definition (name: "EZex Power Meter KOR", 
+metadata{  definition (name: "EZex Power Meter Progressive Tax", 
 		namespace: "aboutyellow33923", 
 		author: "YooSangBeom",
 		mnmn: "SmartThingsCommunity", 
