@@ -25,8 +25,8 @@ import physicalgraph.zigbee.clusters.iaszone.ZoneStatus
 import physicalgraph.zigbee.zcl.DataType
 
 metadata{  definition (name: "EZex Power Meter Progressive Tax", 
-		namespace: "aboutyellow33923", 
-		author: "YooSangBeom",
+		namespace: "jonggwan", 
+		author: "YooSangBeom w/ JG",
 		mnmn: "SmartThingsCommunity", 
 		vid: "11a50ae1-1ff2-3053-877c-005c0e788120")
 	{ 
@@ -36,13 +36,13 @@ metadata{  definition (name: "EZex Power Meter Progressive Tax",
         capability "Health Check"
         capability "Sensor"
         capability "Configuration"
-        capability "aboutyellow33923.thismonthenergy"        
-        capability "aboutyellow33923.electriccharges"
-        capability "aboutyellow33923.powerconsumptionstep"
-        capability "aboutyellow33923.meterreadingdate"
-        //capability "aboutyellow33923.season"
-        capability "aboutyellow33923.etcseason"
-        capability "aboutyellow33923.summerseason"
+        capability "jonggwan.thismonthenergy"        
+        capability "jonggwan.electriccharges"
+        capability "jonggwan.powerconsumptionstep"
+        capability "jonggwan.meterreadingdate"
+        //capability "jonggwan.season"
+        capability "jonggwan.etcseason"
+        capability "jonggwan.summerseason"
 
         
         attribute "kwhTotal", "number"		// this is value reported by the switch since joining the hub.  See change log above for details.
