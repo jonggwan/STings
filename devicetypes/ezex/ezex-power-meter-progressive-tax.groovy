@@ -28,7 +28,7 @@ metadata{  definition (name: "EZex Power Meter Progressive Tax",
 		namespace: "jonggwan", 
 		author: "YooSangBeom w/ JG",
 		mnmn: "SmartThingsCommunity", 
-		vid: "11a50ae1-1ff2-3053-877c-005c0e788120")
+		vid: "EZex-ZigBee-Power-Meter")
 	{ 
         capability "Energy Meter"
         capability "Power Meter"
