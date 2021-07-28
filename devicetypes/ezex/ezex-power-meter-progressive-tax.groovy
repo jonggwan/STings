@@ -1,7 +1,8 @@
 /**
- *  EZEX POWER METER NewApp V0.5
+ *  EZEX POWER METER NewApp V0.6
  *
  *  Copyright 2020 YSB
+ *  Copyright 2021 JG
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -26,7 +27,7 @@ import physicalgraph.zigbee.zcl.DataType
 
 metadata{  definition (name: "EZex Power Meter Progressive Tax", 
 		namespace: "jonggwan", 
-		author: "YooSangBeom w/ JG",
+		author: "YooSangBeom and JG",
 		mnmn: "SmartThingsCommunity", 
 		vid: "EZex-ZigBee-Power-Meter")
 	{ 
@@ -50,7 +51,7 @@ metadata{  definition (name: "EZex Power Meter Progressive Tax",
         
         command "reset"
 
-        fingerprint profileId: "0104", deviceId:"0053", inClusters: "0000, 0003, 0004, 0B04, 0702", outClusters: "0019", manufacturer: "", model: "E240-KR080Z0-HA", deviceJoinName: "EZEX Energy Monitor(CT)"
+        fingerprint profileId: "0104", deviceId:"0053", inClusters: "0000, 0003, 0004, 0B04, 0702", outClusters: "0019", manufacturer: "EZex", model: "E240-KR080Z0-HA", deviceJoinName: "EZEX Energy Monitor(CT)"
         
     }
     
