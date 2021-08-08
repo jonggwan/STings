@@ -57,8 +57,8 @@ metadata
 
 	preferences
 	{
-		input name: "MeterReadingDate", title:"검침일" , type: "text", required: true, defaultValue: 7
-		input name: "LastMonthWatt", title:"지난달누적전력(초기화용)" , type: "text", required: true, defaultValue: 0
+		input name: "MeterReadingDate", title:"검침일" , type: "number", range: "0..28", required: true, defaultValue: 0
+		input name: "LastMonthWatt", title:"지난달 누적전력(초기화용)" , type: "number", required: true, defaultValue: 0
 	}
 	// tile definitions
 	tiles(scale: 2)
@@ -115,31 +115,44 @@ metadata
 }
 
 
-def initialize()
+
+def checkDefaultSetting()
 {
-	log.debug "call initialize"
+	if (settings.MeterReadingDate == null || settings.MeterReadingDate == "") settings.MeterReadingDate = 0
+    if (settings.LastMonthWatt == null || settings.LastMonthWatt == "") settings.LastMonthWatt = 0
 }
 
 def handlerMethod()
 {
-	log.debug "Event run this month"
+	log.debug "$state.version Event run this month"
 	reset()
 }
 
 def reset()
 {
-	log.debug "Resetting kWh..."
+	log.debug "$state.version Resetting kWh..."
+    state.lastMonthEnergy = device.currentState('ThisMonthEnergy')?.doubleValue
+    device.updateSetting("LastMonthWatt", [value: 0, type: "number"])
 	sendEvent(name: "resetTotal", value: device.currentState('kwhTotal')?.doubleValue, unit: "kWh")
 	sendEvent(name: "ThisMonthEnergy", value: 0, unit: "kWh")
-	log.debug "Event registration that runs once a month. - YSB"
-	schedule("0 0 0 ${MeterReadingDate.value} 1/1 ? *", handlerMethod)
-	//설정된 매월 검침일 00:00 누적전력 초기화 호출 ,cronmaker 참조
+}
+
+def initialize()
+{
+	if (state.lastMonthEnergy == null || state.lastMonthEnergy == "")	state.lastMonthEnergy = 0
+    if (state.meterReadingDate == null || state.meterReadingDate == "")	state.meterReadingDate = 0
+
+    state.version = "0.61"
+	log.debug "$state.version call initialize"
 }
 
 def parse(String description)
 {
-	log.debug "description is $description"
+	log.debug "$state.version description is $description"
 	def event = zigbee.getEvent(description)
+
+	if (state.version != "0.61") initialize()
+    checkDefaultSetting()
 
 	if (event)
 	{
@@ -147,22 +160,22 @@ def parse(String description)
 		{
 			if (device.currentState('resetTotal')?.doubleValue == null)
 			{
-				log.info "resetTotal"
+				log.info "$state.version resetTotal"
 				sendEvent(name: "resetTotal", value: 0, unit: "kWh")
 			}
-			else if ( description =~ /cluster: 0702/ )
+			if ( description =~ /cluster: 0702/ )
 			{
-				log.info "event power:$event"
+				log.info "$state.version event power:$event"
 				event.value = Math.round(event.value/1000)
 				event.unit = "W"
-				sendEvent(name: "power", value : Math.round(event.value), unit: "W")
+				sendEvent(name: "power", value : event.value, unit: "W")
 			}
 /*
 			else if ( description =~ /cluster: 0B04/ )
 			{
 				event.value = Math.round(event.value/10)
 				event.unit = "W"
-				sendEvent(name: "power", value : Math.round(event.value), unit: "W")
+				sendEvent(name: "power", value : event.value, unit: "W")
 			}
 */
 		}
@@ -171,7 +184,7 @@ def parse(String description)
 	{
 		List result = []
 		def descMap = zigbee.parseDescriptionAsMap(description)
-		log.debug "Desc Map: $descMap"
+		log.debug "$state.version Desc Map: $descMap"
 
 		List attrData = [[clusterInt: descMap.clusterInt ,attrInt: descMap.attrInt, value: descMap.value]]
 		descMap.additionalAttrs.each
@@ -184,7 +197,7 @@ def parse(String description)
 
 			if (it.clusterInt == 0x0702 && it.attrInt == 0x0400)
 			{
-				log.debug "power"
+				log.debug "$state.version power"
 				map.name = "power"
 				map.value = Math.round(zigbee.convertHexToInt(it.value)/1000)
 				map.unit = "W"
@@ -192,7 +205,7 @@ def parse(String description)
 /*
 			if (it.clusterInt == 0x0B04 && it.attrInt == 0x050b)
 			{
-				log.debug "meter"
+				log.debug "$state.version meter"
 				map.name = "power"
 				map.value = Math.round(zigbee.convertHexToInt(it.value)/10)
 				map.unit = "W"
@@ -200,7 +213,7 @@ def parse(String description)
 */
 			if (it.clusterInt == 0x0702 && it.attrInt == 0x0000)
 			{
-				log.debug "energy"
+				log.debug "$state.version energy"
 				map.name = "powerConsumption"
 				map.value = Math.round(zigbee.convertHexToInt(it.value)/1000000)
 				map.unit = "kWh"
@@ -209,31 +222,30 @@ def parse(String description)
 				{
 					sendEvent(name: "resetTotal", value: 0, unit: "kWh")
 				}
-				else
-				{
-					sendEvent(name: "energy", value:  Math.round(zigbee.convertHexToInt(it.value)/1000000), unit: "kWh")
-					def value2 = Math.round(zigbee.convertHexToInt(it.value)/1000000) - device.currentState('resetTotal')?.doubleValue
-					sendEvent(name: "ThisMonthEnergy", value: Math.round(value2), unit: "kWh")
-					sendEvent(name: "kwhTotal", value:Math.round(zigbee.convertHexToInt(it.value)/1000000), unit: "kWh", displayed: false)
-				}
+
+				sendEvent(name: "energy", value:  map.value, unit: "kWh")
+
+				def value2 = map.value - device.currentState('resetTotal')?.doubleValue
+				sendEvent(name: "ThisMonthEnergy", value: Math.round(value2), unit: "kWh")
+				sendEvent(name: "kwhTotal", value: map.value, unit: "kWh", displayed: false)
 
 				calculateFare()
 			}
 			if (it.clusterInt == 0x0702 && it.attrInt == 0x0901)
 			{
 				def val1 = zigbee.convertHexToInt(it.value)
-				log.debug "901 value is $val1"
+				log.debug "$state.version 901 value is $val1"
 			}
 			if (it.clusterInt == 0x0702 && it.attrInt == 0x0902)
 			{
 				def val2 = zigbee.convertHexToInt(it.value)
-				log.debug "902 value is $val1"
+				log.debug "$state.version 902 value is $val2"
 			}
 			if (map)
 			{
 				result << sendEvent(map)
 			}
-			log.debug "Parse returned $map"
+			log.debug "$state.version Parse returned $map"
 		}
 		return result
 	}
@@ -352,7 +364,7 @@ def calculateFare()
 			def temp_tax1 = Math.round(temp_charge*vat_rate)
 			def temp_tax2 = Math.floor(temp_charge*misc_rate/10)*10
 			sendEvent(name: 'ElectricCharges', value: Math.round(temp_charge+temp_tax1+temp_tax2), unit: "원")
-			sendEvent(name: 'powerConsumptionStep', value: "슈퍼누진4단계")
+			sendEvent(name: 'powerConsumptionStep', value: "슈퍼누진4 단계")
 		}
 	}
 	else if( (this_month == 6) || (this_month == 8) ) //6~7  8~9
@@ -549,11 +561,17 @@ def calculateFare()
 
 def updated()
 {
-	sendEvent(name: 'MeterReadingDate', value: MeterReadingDate+" 일" )//, unit:"일")
-	sendEvent(name: "resetTotal", value: LastMonthWatt.toInteger(), unit: "kWh")
-	log.debug "Event registration that runs once a month. - YSB"
-	schedule("0 0 0 ${MeterReadingDate.value} 1/1 ? *", handlerMethod)
-	//설정된 매월 검침일 00:00 누적전력 초기화 호출 ,cronmaker 참조
+	checkDefaultSetting()
+	state.meterReadingDate = settings.MeterReadingDate
+	sendEvent(name: 'MeterReadingDate', value: settings.MeterReadingDate+" 일" )//, unit:"일")
+	sendEvent(name: "resetTotal", value: settings.LastMonthWatt.toInteger(), unit: "kWh")
+
+	log.debug "$state.version Event registration that runs once a month. - YSB"
+	unschedule()
+    if (settings.MeterReadingDate > 0 && settings.MeterReadingDate < 29) {
+		schedule("0 0 0 ${settings.MeterReadingDate} * ?", handlerMethod)
+		//설정된 매월 검침일 00:00 누적전력 초기화 호출 ,cronmaker 참조
+    }
 }
 
 /**
@@ -565,18 +583,19 @@ def ping()
 }
 
 def refresh() {
-	log.debug "refresh "
+	log.debug "$state.version call refresh "
 	zigbee.electricMeasurementPowerRefresh() +
 		zigbee.simpleMeteringPowerRefresh()
 }
 def installed()
 {
-	log.debug "Installed"
 	sendEvent(name: "resetTotal", value: 0, unit: "kWh")
+	initialize()
+	log.debug "$state.version Installed"
 }
 private void createChild()
 {
-	  log.debug "Creating child"
+	  log.debug "$state.version Creating child"
 	  def child = addChildDevice("smartthings","Zigbee Power Meter",
 								   "${device.deviceNetworkId}:${1}",
 													   device.hubId,
@@ -591,7 +610,7 @@ private channelNumber(String dni)
 
 private sendCharge(Double Charger,Double ThisMonthEnergy )
 {
-	log.debug "enter sendCharge $Charger : $ThisMonthEnergy"
+	log.debug "$state.version enter sendCharge $Charger : $ThisMonthEnergy"
 	def descriptionText =  "실시간 전기요금 사용량"
 	def child = childDevices?.find { channelNumber(it.deviceNetworkId) == 1 }
 
@@ -604,7 +623,7 @@ private sendCharge(Double Charger,Double ThisMonthEnergy )
 	}
 	else
 	{
-		log.debug "Child device not found!"
+		log.debug "$state.version Child device not found!"
 		createChild()
 	}
 }
@@ -613,7 +632,7 @@ def configure()
 	// this device will send instantaneous demand and current summation delivered every 1 minute
 	sendEvent(name: "checkInterval", value: 2 * 60 + 10 * 60, displayed: false, data: [protocol: "zigbee", hubHardwareId: device.hub.hardwareID])
 
-	log.debug "Configuring Reporting"
+	log.debug "$state.version Configuring Reporting"
 	return refresh() +
 			zigbee.simpleMeteringPowerConfig() +
 			zigbee.electricMeasurementPowerConfig()
