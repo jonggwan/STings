@@ -11,7 +11,11 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  */
+
 import physicalgraph.zigbee.zcl.DataType
+import groovy.transform.Field
+
+@Field version = "1.35"
 
 metadata {
 	definition (name: "Dawon Zigbee Metering Plug Power Consumption Report", namespace: "smartthings", author: "SmartThings", ocfDeviceType: "oic.d.smartplug", mnmn: "Dawon",  vid: "STES-1-Dawon-Zigbee_Smart_Plug") {
@@ -37,10 +41,11 @@ metadata {
 		fingerprint manufacturer: "DAWON_DNS", model: "PM-B440-ZB", deviceJoinName: "Dawon Outlet" // DAWON DNS Smart Plug
 	}
 	preferences {
-		input name: "meterReadingDay", title: "검침일" , type: "number", range: "0..28", description: "검침일(검침일에 전력량 초기화. 0 이면 초기화를 하지 않음)", required: true, defaultValue: 0
-		input name: "resetMethod", title: "전력량(kWh) 초기화 방법", type: "enum", options: ["HW", "SW"], description: "전력량 초기화 방법(신형 또는 엔드펌지원 플러그인 경우에는 HW 선택가능, SW 방식은 모든 플러그에서 동작함)", required: true, defaultValue: "SW"
+		input name: "meterReadingDay", title: "검침일" , type: "number", range: "0..31", description: "검침일(검침일에 전력량 초기화. 0 이면 초기화를 하지 않음, 29이상은 말일)", required: true, defaultValue: 0
 		input name: "initEnergy", title: "전력량(kWh) 초기화(1회성)", type: "enum", options: ["Yes", "No"], description: "전력량 초기화(1회성 작업으로 초기화후 선택값이 No로 되돌려짐)", required: true, defaultValue: "No"
-		input name: "energyReport", title: "ST 에너지앱 지원", type: "enum", options: ["Yes", "No"], description: "ST 에너지앱 지원 활성화 여부", required: true, defaultValue: "Yes"
+		input name: "resetMethod", title: "전력량(kWh) 초기화 방법", type: "enum", options: ["HW", "SW"], description: "전력량 초기화 방법(신형 또는 엔드펌지원 플러그인 경우에는 HW 선택가능, SW 방식은 모든 플러그에서 동작함)", required: true, defaultValue: "SW"
+		input name: "energyReport", title: "ST 에너지앱 지원", type: "enum", options: ["Yes", "No"], description: "ST 에너지앱 지원 활성화 여부", required: true, defaultValue: "No"
+		input type: "paragraph", element: "paragraph", title: "Version", description: "$version", displayDuringSetup: false
 	}
 }
 
@@ -53,7 +58,7 @@ def initialize() {
 	if (state.energyOverflow == null || state.energyOverflow == "" )	state.energyOverflow = "No"
 	if (state.prev == null || state.prev == "" )						state.prev = 0
 	if (state.resetEnergy == null || state.resetEnergy == "" )			state.resetEnergy = 0
-	state.version = "1.14"
+	state.version = version
 }
 
 def parse(String description) {
@@ -61,7 +66,7 @@ def parse(String description) {
 	def event = zigbee.getEvent(description)
 	def descMap = zigbee.parseDescriptionAsMap(description)
 
-	if (state.version != "1.14")	initialize()
+	if (state.version != version)	initialize()
 
 	checkDefaultSettings()
 
@@ -172,7 +177,7 @@ def checkDefaultSettings() {
 	if (settings.meterReadingDay == null || settings.meterReadingDay == "")	settings.meterReadingDay = 0
 	if (settings.resetMethod == null || settings.resetMethod == "")			settings.resetMethod = "SW"
 	if (settings.initEnergy == null || settings.initEnergy == "")			settings.initEnergy = "No"
-	if (settings.energyReport == null || settings.energyReport == "")		settings.energyReport = "Yes"
+	if (settings.energyReport == null || settings.energyReport == "")		settings.energyReport = "No"
 	//log.debug "$settings.meterReadingDay $settings.resetMethod $settings.initEnergy $settings.energyReport"
 }
 
@@ -235,9 +240,12 @@ def updated() {
 		device.updateSetting("initEnergy", [value: "No", type: "enum"])
 	}
 	checkDefaultSettings()
-	unschedule()
+	unschedule(resetMeter)
 	if (settings.meterReadingDay > 0 && settings.meterReadingDay < 29) {
-		schedule("0 0 0 ${settings.meterReadingDay} * ?", reset)
+		schedule("1 0 0 ${settings.meterReadingDay} * ?", resetMeter)
+	}
+	else if (settings.meterReadingDay >= 29) {
+		schedule("1 0 0 L * ?", resetMeter)
 	}
 }
 
@@ -249,14 +257,18 @@ private int getEnergyDiv() {
 	1000
 }
 
+def resetMeter() {
+	reset()
+}
+
 def reset(){
 	log.debug "$state.version reset()"
 
-	state.resetEnergy = 1
 	if ( settings.resetMethod == "HW" )
 	{
 		def pEnergy = device.currentState("energy").value
 		sendEvent(name: "energy", value: pEnergy, unit: "kWh", displayed: true)
 		zigbee.writeAttribute(zigbee.SIMPLE_METERING_CLUSTER, 0x0099, DataType.UINT8, 00)
 	}
+	state.resetEnergy = 1
 }
