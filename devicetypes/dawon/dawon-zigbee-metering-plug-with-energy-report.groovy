@@ -25,6 +25,8 @@ metadata {
 		capability "Configuration"
 		capability "Power Consumption Report"
 
+		command "reset"
+
 		fingerprint manufacturer: "DAWON_DNS", model: "PM-B430-ZB", deviceJoinName: "Dawon Outlet" // DAWON DNS Smart Plug
 		fingerprint manufacturer: "DAWON_DNS", model: "PM-B530-ZB", deviceJoinName: "Dawon Outlet" // DAWON DNS Smart Plug
 		fingerprint manufacturer: "DAWON_DNS", model: "PM-C140-ZB", deviceJoinName: "Dawon Outlet" // DAWON DNS In-Wall Outlet
@@ -34,47 +36,74 @@ metadata {
 		fingerprint manufacturer: "DAWON_DNS", model: "PM-C250-ZB", deviceJoinName: "Dawon Outlet" // DAWON DNS In-Wall Outlet
 		fingerprint manufacturer: "DAWON_DNS", model: "PM-B440-ZB", deviceJoinName: "Dawon Outlet" // DAWON DNS Smart Plug
 	}
+	preferences {
+		input name: "meterReadingDay", title: "검침일" , type: "number", range: "0..28", description: "검침일(검침일에 전력량 초기화. 0 이면 초기화를 하지 않음)", required: true, defaultValue: 0
+		input name: "resetMethod", title: "전력량(kWh) 초기화 방법", type: "enum", options: ["HW", "SW"], description: "전력량 초기화 방법(신형 또는 엔드펌지원 플러그인 경우에는 HW 선택가능, SW 방식은 모든 플러그에서 동작함)", required: true, defaultValue: "SW"
+		input name: "initEnergy", title: "전력량(kWh) 초기화(1회성)", type: "enum", options: ["Yes", "No"], description: "전력량 초기화(1회성 작업으로 초기화후 선택값이 No로 되돌려짐)", required: true, defaultValue: "No"
+		input name: "energyReport", title: "ST 에너지앱 지원", type: "enum", options: ["Yes", "No"], description: "ST 에너지앱 지원 활성화 여부", required: true, defaultValue: "Yes"
+	}
 }
 
 def getATTRIBUTE_READING_INFO_SET() { 0x0000 }
 def getATTRIBUTE_HISTORICAL_CONSUMPTION() { 0x0400 }
 
 def initialize() {
-	state.energyBias = 0
-    state.energyOverflow = "No"
+	log.debug "$state.version initialize()"
+	if (state.energyBias == null || state.energyBias == "" )			state.energyBias = 0
+	if (state.energyOverflow == null || state.energyOverflow == "" )	state.energyOverflow = "No"
+	if (state.prev == null || state.prev == "" )						state.prev = 0
+	if (state.resetEnergy == null || state.resetEnergy == "" )			state.resetEnergy = 0
+	state.version = "1.14"
 }
 
 def parse(String description) {
-	log.debug "description is $description"
+	log.debug "$state.version description is $description"
 	def event = zigbee.getEvent(description)
 	def descMap = zigbee.parseDescriptionAsMap(description)
 
+	if (state.version != "1.14")	initialize()
+
+	checkDefaultSettings()
+
 	if (event) {
-		log.info "event enter:$event"
+		log.info "$state.version event enter:$event"
 		if (event.name == "switch" && !descMap.isClusterSpecific && descMap.commandInt == 0x0B) {
-			log.info "Ignoring default response with desc map: $descMap"
+			log.info "$state.version Ignoring default response with desc map: $descMap"
 			return [:]
 		} else if (event.name== "power") {
 			event.value = event.value/getPowerDiv()
 			event.unit = "W"
 		} else if (event.name== "energy") {
-			if (state.energyOverflow== "No" && event.value > 1000000000) {
-            	state.energyBias = event.value
-                state.energyOverflow = "Yes"
-			} else if (state.energyOverflow== "Yes" && event.value < 1000000000) {
-            	state.energyBias = 0
-                state.energyOverflow = "No"
+			if (state.energyOverflow== "No" && event.value > 4000000000) {
+				state.energyBias = event.value - state.prev
+				state.energyOverflow = "Yes"
+				log.debug "$state.version Energy bias is set to $state.energyBias (abnormal value)"
+			} else if (state.energyOverflow== "Yes" && event.value < 4000000000) {
+				state.energyBias = event.value - state.prev
+				state.energyOverflow = "No"
+				log.debug "$state.version Energy bias is reset to $state.energyBias (normal value)"
 			}
-            def currentEnergy = event.value - state.energyBias
-            currentEnergy = (currentEnergy/2.0).toInteger() * 2.0
-			event.value = currentEnergy/getEnergyDiv()
-            event.unit = "kWh"
+			state.prev = event.value - state.energyBias
+			if (state.resetEnergy == 1) {
+				if (settings.resetMethod == "HW" ) {
+					state.energyBias = 0
+					state.prev = event.value
+				}
+				else if (settings.resetMethod == "SW") {
+					state.energyBias = event.value
+					state.prev = 0
+				}
+				state.resetEnergy = 0
+				log.debug "$state.version Enery was reset to zero"
+			}
+			event.value = state.prev.toDouble()/getEnergyDiv()
+			event.unit = "kWh"
 		}
-		log.info "event outer:$event"
+		log.info "$state.version event outer:$event"
 		sendEvent(event)
 	} else {
 		List result = []
-		log.debug "Desc Map: $descMap"
+		log.debug "$state.version Desc Map: $descMap"
 
 		List attrData = [[clusterInt: descMap.clusterInt ,attrInt: descMap.attrInt, value: descMap.value]]
 		descMap.additionalAttrs.each {
@@ -84,55 +113,84 @@ def parse(String description) {
 		attrData.each {
 			def map = [:]
 			if (it.value && it.clusterInt == zigbee.SIMPLE_METERING_CLUSTER && it.attrInt == ATTRIBUTE_HISTORICAL_CONSUMPTION) {
-				log.debug "power"
+				log.debug "$state.version power"
 				map.name = "power"
 				map.value = zigbee.convertHexToInt(it.value)/getPowerDiv()
 				map.unit = "W"
 			}
 			else if (it.value && it.clusterInt == zigbee.SIMPLE_METERING_CLUSTER && it.attrInt == ATTRIBUTE_READING_INFO_SET) {
-				log.debug "energy"
+				log.debug "$state.version energy"
 				map.name = "energy"
-                def currentEnergy = zigbee.convertHexToInt(it.value)
-				if (state.energyOverflow== "No" && currentEnergy > 1000000000) {
-					state.energyBias = currentEnergy
+				def currentEnergy = zigbee.convertHexToInt(it.value)
+				if (state.energyOverflow== "No" && currentEnergy > 4000000000) {
+					state.energyBias = currentEnergy - state.prev
 					state.energyOverflow = "Yes"
-				} else if (state.energyOverflow== "Yes" && currentEnergy < 1000000000) {
-					state.energyBias = 0
+					log.debug "$state.version Energy bias is set to $state.energyBias (abnormal value)"
+				} else if (state.energyOverflow== "Yes" && currentEnergy < 4000000000) {
+					state.energyBias = currentEnergy - state.prev
 					state.energyOverflow = "No"
+					log.debug "$state.version Energy bias is set to $state.energyBias (normal value)"
 				}
-                currentEnergy = currentEnergy - state.energyBias
-                currentEnergy = (currentEnergy/2.0).toInteger() * 2
-				map.value = currentEnergy.toDouble()/getEnergyDiv()
-                map.unit = "kWh"
+				state.prev = currentEnergy - state.energyBias
+				if (state.resetEnergy == 1) {
+					if (settings.resetMethod == "HW" ) {
+						state.energyBias = 0
+						state.prev = currentEnergy
+					}
+					else if (settings.resetMethod == "SW") {
+						state.energyBias = currentEnergy
+						state.prev = 0
+					}
+					state.resetEnergy = 0
+					log.debug "$state.version Enery was reset to zero"
+				}
+				map.value = state.prev.toDouble()/getEnergyDiv()
+				map.unit = "kWh"
 
-				def currentPowerConsumption = device.currentState("powerConsumption")?.value
-				Map previousMap = currentPowerConsumption ? new groovy.json.JsonSlurper().parseText(currentPowerConsumption) : [:]
-            
-                def deltaEnergy = calculateDelta (currentEnergy, previousMap)
-                if (deltaEnergy > 1000000000) {
-                	deltaEnergy = 0
-                }
-				Map reportMap = [:]
-				reportMap["energy"] = currentEnergy
-				reportMap["deltaEnergy"] = deltaEnergy 
-				sendEvent("name": "powerConsumption", "value": reportMap.encodeAsJSON(), displayed: false)
+				if (settings.energyReport == "Yes") {
+					def currentPowerConsumption = device.currentState("powerConsumption")?.value
+					Map previousMap = currentPowerConsumption ? new groovy.json.JsonSlurper().parseText(currentPowerConsumption) : [:]
+
+					def deltaEnergy = calculateDelta (state.prev, previousMap)
+					Map reportMap = [:]
+					reportMap["energy"] = state.prev
+					reportMap["deltaEnergy"] = deltaEnergy 
+					sendEvent("name": "powerConsumption", "value": reportMap.encodeAsJSON(), displayed: false)
+					log.debug "$state.version powerConsumption sendEvent $reportMap"
+				}
 			}
 
-			if (map) {
-				result << createEvent(map)
-			}
-			log.debug "Parse returned $map"
+			if (map)	result << createEvent(map)
+
+			log.debug "$state.version Parse returned $map"
 		}
 		return result
 	}
 }
 
+def checkDefaultSettings() {
+	if (settings.meterReadingDay == null || settings.meterReadingDay == "")	settings.meterReadingDay = 0
+	if (settings.resetMethod == null || settings.resetMethod == "")			settings.resetMethod = "SW"
+	if (settings.initEnergy == null || settings.initEnergy == "")			settings.initEnergy = "No"
+	if (settings.energyReport == null || settings.energyReport == "")		settings.energyReport = "Yes"
+	//log.debug "$settings.meterReadingDay $settings.resetMethod $settings.initEnergy $settings.energyReport"
+}
+
+BigDecimal calculateDelta (BigDecimal currentEnergy, Map previousMap) {
+	if (previousMap?.'energy' == null)	return 0;
+
+	BigDecimal lastAcumulated = BigDecimal.valueOf(previousMap ['energy']);
+	return currentEnergy.subtract(lastAcumulated).max(BigDecimal.ZERO);
+}
+
 def off() {
+	log.debug "$state.version off()"
 	def cmds = zigbee.off()
 	return cmds
 }
 
 def on() {
+	log.debug "$state.version on()"
 	def cmds = zigbee.on()
 	return cmds
 }
@@ -141,34 +199,46 @@ def on() {
  * PING is used by Device-Watch in attempt to reach the Device
  * */
 def ping() {
+	log.debug "$state.version ping()"
 	return refresh()
 }
 
 def refresh() {
-	log.debug "refresh"
-    initialize()
+	log.debug "$state.version refresh"
 	zigbee.onOffRefresh() +
 	zigbee.electricMeasurementPowerRefresh() +
+	zigbee.simpleMeteringPowerRefresh() +
 	zigbee.readAttribute(zigbee.SIMPLE_METERING_CLUSTER, ATTRIBUTE_READING_INFO_SET)
 }
 
 def configure() {
+	log.debug "$state.version Configuring Reporting"
 	// this device will send instantaneous demand and current summation delivered every 1 minute
 	sendEvent(name: "checkInterval", value: 2 * 60 + 10 * 60, displayed: false, data: [protocol: "zigbee", hubHardwareId: device.hub.hardwareID])
-	log.debug "Configuring Reporting"
+
 	return refresh() +
 		zigbee.onOffConfig() +
 		zigbee.configureReporting(zigbee.SIMPLE_METERING_CLUSTER, ATTRIBUTE_READING_INFO_SET, DataType.UINT48, 1, 600, 1) +
-		zigbee.electricMeasurementPowerConfig(1, 600, 1) +
-		zigbee.simpleMeteringPowerConfig()
+		zigbee.electricMeasurementPowerConfig(1, 600, 0x01) +
+		zigbee.simpleMeteringPowerConfig(1, 600, 0x01)
 }
 
 def installed() {
-    initialize()
+	log.debug "$state.version installed()"
+	initialize()
 }
 
 def updated() {
-    initialize()
+	log.debug "$state.version updated()"
+	if (settings.initEnergy == "Yes") {
+		reset()
+		device.updateSetting("initEnergy", [value: "No", type: "enum"])
+	}
+	checkDefaultSettings()
+	unschedule()
+	if (settings.meterReadingDay > 0 && settings.meterReadingDay < 29) {
+		schedule("0 0 0 ${settings.meterReadingDay} * ?", reset)
+	}
 }
 
 private int getPowerDiv() {
@@ -179,10 +249,14 @@ private int getEnergyDiv() {
 	1000
 }
 
-BigDecimal calculateDelta (BigDecimal currentEnergy, Map previousMap) {
-	if (previousMap?.'energy' == null) {
-		return 0;
+def reset(){
+	log.debug "$state.version reset()"
+
+	state.resetEnergy = 1
+	if ( settings.resetMethod == "HW" )
+	{
+		def pEnergy = device.currentState("energy").value
+		sendEvent(name: "energy", value: pEnergy, unit: "kWh", displayed: true)
+		zigbee.writeAttribute(zigbee.SIMPLE_METERING_CLUSTER, 0x0099, DataType.UINT8, 00)
 	}
-	BigDecimal lastAcumulated = BigDecimal.valueOf(previousMap ['energy']);
-	return currentEnergy.subtract(lastAcumulated).max(BigDecimal.ZERO);
 }
