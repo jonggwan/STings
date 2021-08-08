@@ -22,8 +22,11 @@
 // 2021-7-26 2021년 전기요금체제로 개편. 관련 요율을 하나의 배열로만 저장하여 코딩 오류 및 추후 변동시에 대응이 편하도록 함.
 
 import groovy.json.JsonOutput
+import groovy.transform.Field
 import physicalgraph.zigbee.clusters.iaszone.ZoneStatus
 import physicalgraph.zigbee.zcl.DataType
+
+@Field version = "0.62"
 
 metadata
 {
@@ -46,6 +49,8 @@ metadata
 		//capability "aboutyellow33923.season"
 		capability "aboutyellow33923.etcseason"
 		capability "aboutyellow33923.summerseason"
+		capability "circlecircle06391.status"				//statusbar
+		capability "circlecircle06391.statusBar"			//status
 
 		attribute "kwhTotal", "number"		// this is value reported by the switch since joining the hub.  See change log above for details.
 		attribute "resetTotal", "number"	// used to calculate accumulated kWh after a reset by the user.  See change log above for details.
@@ -57,8 +62,9 @@ metadata
 
 	preferences
 	{
-		input name: "MeterReadingDate", title:"검침일" , type: "number", range: "0..28", required: true, defaultValue: 0
+		input name: "MeterReadingDate", title:"검침일" , type: "number", range: "0..31", description: "검침일(검침일에 전력량 초기화. 0 이면 초기화를 하지 않음, 29이상은 말일)", required: true, defaultValue: 0
 		input name: "LastMonthWatt", title:"지난달 누적전력(초기화용)" , type: "number", required: true, defaultValue: 0
+		input type: "paragraph", element: "paragraph", title: "Version", description: "$version", displayDuringSetup: false
 	}
 	// tile definitions
 	tiles(scale: 2)
@@ -114,15 +120,13 @@ metadata
 	}
 }
 
-
-
 def checkDefaultSetting()
 {
-	if (settings.MeterReadingDate == null || settings.MeterReadingDate == "") settings.MeterReadingDate = 0
-    if (settings.LastMonthWatt == null || settings.LastMonthWatt == "") settings.LastMonthWatt = 0
+	if (settings.MeterReadingDate == null || settings.MeterReadingDate == "") 	settings.MeterReadingDate = 0
+	if (settings.LastMonthWatt == null || settings.LastMonthWatt == "") 		settings.LastMonthWatt = 0
 }
 
-def handlerMethod()
+def resetMeter()
 {
 	log.debug "$state.version Event run this month"
 	reset()
@@ -131,8 +135,8 @@ def handlerMethod()
 def reset()
 {
 	log.debug "$state.version Resetting kWh..."
-    state.lastMonthEnergy = device.currentState('ThisMonthEnergy')?.doubleValue
-    device.updateSetting("LastMonthWatt", [value: 0, type: "number"])
+	state.lastMonthEnergy = device.currentState('ThisMonthEnergy')?.doubleValue
+	device.updateSetting("LastMonthWatt", [value: 0, type: "number"])
 	sendEvent(name: "resetTotal", value: device.currentState('kwhTotal')?.doubleValue, unit: "kWh")
 	sendEvent(name: "ThisMonthEnergy", value: 0, unit: "kWh")
 }
@@ -140,9 +144,9 @@ def reset()
 def initialize()
 {
 	if (state.lastMonthEnergy == null || state.lastMonthEnergy == "")	state.lastMonthEnergy = 0
-    if (state.meterReadingDate == null || state.meterReadingDate == "")	state.meterReadingDate = 0
+	if (state.meterReadingDate == null || state.meterReadingDate == "")	state.meterReadingDate = 0
 
-    state.version = "0.61"
+	state.version = version
 	log.debug "$state.version call initialize"
 }
 
@@ -151,8 +155,9 @@ def parse(String description)
 	log.debug "$state.version description is $description"
 	def event = zigbee.getEvent(description)
 
-	if (state.version != "0.61") initialize()
-    checkDefaultSetting()
+	if (state.version != version) initialize()
+
+	checkDefaultSetting()
 
 	if (event)
 	{
@@ -169,6 +174,10 @@ def parse(String description)
 				event.value = Math.round(event.value/1000)
 				event.unit = "W"
 				sendEvent(name: "power", value : event.value, unit: "W")
+
+				def status2 = device.currentState('ThisMonthEnergy')?.value
+				def status = "$event.value W, ${status2} kWh"
+				sendEvent(name: "statusbar", value: status, displayed: false)
 			}
 /*
 			else if ( description =~ /cluster: 0B04/ )
@@ -567,11 +576,13 @@ def updated()
 	sendEvent(name: "resetTotal", value: settings.LastMonthWatt.toInteger(), unit: "kWh")
 
 	log.debug "$state.version Event registration that runs once a month. - YSB"
-	unschedule()
-    if (settings.MeterReadingDate > 0 && settings.MeterReadingDate < 29) {
-		schedule("0 0 0 ${settings.MeterReadingDate} * ?", handlerMethod)
-		//설정된 매월 검침일 00:00 누적전력 초기화 호출 ,cronmaker 참조
-    }
+	unschedule(resetMeter)
+	if (settings.MeterReadingDate > 0 && settings.MeterReadingDate < 29) {
+		schedule("1 0 0 ${settings.MeterReadingDate} * ?", resetMeter)
+	}
+	else if (settings.MeterReadingDate >= 29) {
+		schedule("1 0 0 L * ?", resetMeter)
+	}
 }
 
 /**
@@ -587,12 +598,14 @@ def refresh() {
 	zigbee.electricMeasurementPowerRefresh() +
 		zigbee.simpleMeteringPowerRefresh()
 }
+
 def installed()
 {
 	sendEvent(name: "resetTotal", value: 0, unit: "kWh")
 	initialize()
 	log.debug "$state.version Installed"
 }
+
 private void createChild()
 {
 	  log.debug "$state.version Creating child"
@@ -618,8 +631,12 @@ private sendCharge(Double Charger,Double ThisMonthEnergy )
 	{
 		child?.sendEvent([name: "energy", value: ThisMonthEnergy, data: [1: 1], descriptionText: descriptionText, isStateChange: true])
 		child?.sendEvent([name: "power", value: Charger, data: [1: 1], descriptionText: descriptionText, isStateChange: true])
-		child?.sendEvent([name: "ThisMonthEnergy", value: ThisMonthEnergy, unit: "kWh", data: [1: 1], descriptionText: descriptionText, isStateChange: true])
-		child?.sendEvent([name: "ElectricCharges", value: Charger, unit: "원", data: [1: 1], descriptionText: descriptionText, isStateChange: true])
+		//child?.sendEvent([name: "ThisMonthEnergy", value: ThisMonthEnergy, unit: "kWh", data: [1: 1], descriptionText: descriptionText, isStateChange: true])
+		//child?.sendEvent([name: "ElectricCharges", value: Charger, unit: "원", data: [1: 1], descriptionText: descriptionText, isStateChange: true])
+		def status1 = ThisMonthEnergy.toInteger()
+		def status2 = device.currentState('powerConsumptionStep')?.value
+		def status = "${status1} 원, ${status2}"
+		child?.sendEvent(name: "statusbar", value: status, displayed: false)
 	}
 	else
 	{
@@ -627,6 +644,7 @@ private sendCharge(Double Charger,Double ThisMonthEnergy )
 		createChild()
 	}
 }
+
 def configure()
 {
 	// this device will send instantaneous demand and current summation delivered every 1 minute
